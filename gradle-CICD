@@ -1,0 +1,82 @@
+pipeline{
+    agent any
+    tools{
+        jdk'jdk11'
+        gradle'gradle'
+    }
+    stages{
+        stage('Cleanws'){
+            steps{
+                cleanWs()
+            }
+        }
+        stage('checkout from scm'){
+            steps{
+                git branch: 'main', url: 'https://github.com/swamy1047/Java_Gradle_Responsive_Website.git'
+            }
+        }
+        stage('Gradle compile'){
+            steps{
+                sh'chmod +x gradlew'
+                sh'./gradlewcompileJava'
+            }
+        }
+        stage('Test Gradle'){
+            steps{
+                sh'chmod +x gradlew'
+                sh'./gradlew test'
+            }
+        }
+        stage('sonarqube Analysis'){
+            steps{
+                script{
+                      withSonarQubeEnv(credentialsId: 'Sonar-token') {
+                        sh'chmod +x gradlew'
+                        sh'./gradlewsonarqube'
+                    }
+                    //quality gate
+                    timeout(time: 10, unit: 'MINUTES'){
+                        defqg=waitForQualityGate()
+                        if (qg.status!='OK'){
+                            error "pipeline is aborted due to qualitygate failure: ${qg.status}"
+                        }
+                    }
+                }
+            }
+        }
+        stage('build Gradle'){
+            steps{
+                sh'chmod +x gradlew'
+                sh'./gradlew build'
+            }
+        }
+        stage("OWASP Dependency Check"){
+            steps{
+                dependencyCheckadditionalArguments: '--scan ./ --format HTML ', odcInstallation: 'DP-Check'
+                dependencyCheckPublisher pattern: '**/dependency-check-report.html'
+            }
+        }
+        stage('build and push to nexus'){
+            steps{
+                script{
+                    withCredentials([string(credentialsId: 'docker_pass', variable: 'docker_password')]) {
+                        sh'''
+                         docker build -t 43.204.235.20:8083/gradle1:latest .
+                         docker login -u admin -p $docker_password 43.204.235.20:8083
+                         docker push 43.204.235.20:8083/gradle1:latest
+                         '''
+                    }
+                }
+            }
+        }
+        stage('deploy to container'){
+            steps{
+                script{
+                    withCredentials([string(credentialsId: 'docker_pass', variable: 'docker_password')]) {
+                        sh'docker run -d --name g1 -p 8082:8080 43.204.235.20:8083/gradle1:latest'
+                    }
+                }
+            }
+        }
+    }
+}
